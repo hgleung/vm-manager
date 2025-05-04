@@ -42,14 +42,6 @@ The core of the project is implemented in `virtual_memory.py`, which defines a `
 - Translates each address using `translate_address`.
 - Writes the resulting physical addresses (or `-1` for faults) to `output.txt`.
 
-### Main Function
-- Creates a `VMManager` instance, initializes it from `init-dp.txt`, and processes addresses from `input-dp.txt`.
-
-## Example Files
-- `init-dp.txt`: Contains segment and page table initialization data.
-- `input-dp.txt`: Contains virtual addresses to be translated.
-- `output.txt`: Output file with resulting physical addresses.
-
 ## Error Handling
 - The implementation prints errors encountered during initialization and raises exceptions for critical failures.
 - Segment faults and out-of-bounds accesses are handled by returning `-1` as specified.
