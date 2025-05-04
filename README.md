@@ -57,6 +57,3 @@ The core of the project is implemented in `virtual_memory.py`, which defines a `
 ## Notes
 - The simulation assumes that the disk contains valid data for non-resident page tables and pages.
 - The logic for loading a page from disk is a placeholder, as the project focuses on address translation and page fault handling.
-
-## Contact
-For questions or issues, please contact the course staff or open an issue in your course repository.
