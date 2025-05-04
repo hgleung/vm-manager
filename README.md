@@ -1,14 +1,8 @@
 # Virtual Memory Manager for UC Irvine CS 143B
 
-This project implements a virtual memory manager that simulates the translation of virtual addresses to physical addresses using a two-level paging system. The implementation follows the requirements for the UC Irvine CS 143B course project.
+**Author:** Harry Leung
 
-## How to Run
-
-Run the following command in the terminal with the initialization file named `init-dp.txt` and input file named `input-dp.txt`:
-
-```
-python3 virtual_memory.py
-```
+This project implements a virtual memory manager that simulates the translation of virtual addresses to physical addresses using a two-level paging system, including realistic memory management features such as page fault handling, LFU (Least Frequently Used) page replacement, and dynamic memory allocation (malloc, free, realloc).
 
 ## Implementation Overview
 
@@ -20,6 +14,8 @@ The core of the project is implemented in `virtual_memory.py`, which defines a `
 - **Segment Table:** Stored in the first part of `PM`. Each segment has two entries: segment size and the frame/block number of its page table (positive for resident in memory, negative for on disk).
 - **Page Tables:** Each page table is allocated to a frame in `PM` or a block in `DISK`.
 - **Used Frames:** A set to track which frames are currently allocated to avoid collisions.
+- **Frame Access Count:** Tracks how often each frame is accessed, enabling LFU page replacement.
+- **Allocations:** Tracks memory allocations for dynamic memory management (malloc, free, realloc).
 
 ### Initialization (`initialize_from_file`)
 - Reads segment table and page table entries from `init-dp.txt`.
@@ -27,13 +23,19 @@ The core of the project is implemented in `virtual_memory.py`, which defines a `
 - Page table entries specify segment, page, and frame/block for each page.
 - Populates `PM` and `DISK` accordingly, marking frames as used and updating the highest frame number seen.
 
-### Address Translation (`translate_address`)
-- Virtual addresses are 27 bits, split into segment (s), page (p), and offset (w), each 9 bits.
-- Checks if the segment exists and if the address is within bounds.
-- Retrieves the page table location; if not resident, simulates a page table fault by loading it from disk into the next free frame.
-- Retrieves the page frame; if not resident, simulates a page fault by loading it from disk (logic placeholder).
-- Computes the final physical address as `frame * 512 + offset`.
-- Returns `-1` for segment faults or out-of-bounds accesses.
+### Address Translation and Page Fault Handling (`translate_address`, `handle_page_fault`)
+- Virtual addresses are split into segment, page, and offset fields.
+- Address translation consults the segment and page tables, and may trigger a page fault if a required page or page table is not resident in memory.
+- On a page fault, a free frame is allocated if available; otherwise, the LFU (Least Frequently Used) frame is evicted and reused.
+- The relevant page or page table is then loaded (simulated) into memory, and tables are updated accordingly.
+
+### Dynamic Memory Management (`malloc`, `free`, `realloc`)
+- **malloc:** Allocates a contiguous block of physical memory (in words). If a contiguous block is not available, it uses LFU eviction to free frames and retries. If still unsuccessful, malloc fails. **Design Note:** This malloc does NOT allocate non-contiguous frames, unlike a real paging system. Fragmentation can prevent allocations even if enough total free frames exist.
+- **free:** Releases all frames associated with a given allocation address.
+- **realloc:** Resizes an allocation (shrinks in place, or allocates a new block and frees the old one).
+
+### LFU Page Replacement
+- The VMManager tracks access counts for each frame and uses LFU to evict the least-used frame when memory is full (for both page faults and malloc).
 
 ### Processing Input Addresses (`process_addresses`)
 - Reads a list of virtual addresses from `input-dp.txt`.
@@ -55,6 +57,3 @@ The core of the project is implemented in `virtual_memory.py`, which defines a `
 ## Notes
 - The simulation assumes that the disk contains valid data for non-resident page tables and pages.
 - The logic for loading a page from disk is a placeholder, as the project focuses on address translation and page fault handling.
-
-## Contact
-For questions or issues, please contact the course staff or open an issue in your course repository.

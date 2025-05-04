@@ -7,6 +7,8 @@ class VMManager:
         self.used_frames = {0, 1}  # Frames 0,1 reserved for ST (2 frames since each entry is 2 integers)
         self.next_free_frame = 2  # Will be updated after initialization
         self.highest_frame = 1    # Track highest frame number seen
+        self.frame_access_count = {}  # For LFU: frame_number -> access count
+        self.allocations = {}  # Maps starting physical address to (num_frames, [frame_numbers])
 
     def get_next_free_frame(self):
         """Find the next available free frame."""
@@ -65,6 +67,24 @@ class VMManager:
             print(f"Error initializing from file: {e}")
             raise
 
+    def access_frame(self, frame_number):
+        """Increment access count for a frame (for LFU)."""
+        if frame_number not in self.frame_access_count:
+            self.frame_access_count[frame_number] = 0
+        self.frame_access_count[frame_number] += 1
+
+    def evict_lfu_frame(self):
+        """Evict the least-frequently-used frame and return its number."""
+        # Exclude reserved frames from eviction
+        candidate_frames = self.used_frames - {0, 1}
+        if not candidate_frames:
+            return None  # No frame to evict
+        lfu_frame = min(candidate_frames, key=lambda f: self.frame_access_count.get(f, 0))
+        self.used_frames.remove(lfu_frame)
+        if lfu_frame in self.frame_access_count:
+            del self.frame_access_count[lfu_frame]
+        return lfu_frame
+
     def translate_address(self, va):
         """Translate virtual address to physical address."""
         # Extract s, p, w from VA (each 9 bits)
@@ -81,34 +101,47 @@ class VMManager:
 
         # Get PT location from ST
         pt_loc = self.PM[2 * s + 1]
-        
         # If PT is not resident (negative frame number)
         if pt_loc < 0:
-            # Handle PT page fault
-            new_frame = self.get_next_free_frame()
-            disk_block = abs(pt_loc)
-            # Copy PT from disk to memory
-            for i in range(512):
-                self.PM[new_frame * 512 + i] = self.DISK[disk_block][i]
-            # Update ST entry
-            self.PM[2 * s + 1] = new_frame
-            pt_loc = new_frame
+            pt_loc = self.handle_page_fault(s, None, is_pt=True)
+            if pt_loc is None:
+                return None
+        self.access_frame(pt_loc)  # Access PT frame
 
         # Get page frame from PT
         page_frame = self.PM[pt_loc * 512 + p]
-        
         # If page is not resident (negative frame number)
         if page_frame < 0:
-            # Handle page fault
-            new_frame = self.get_next_free_frame()
-            disk_block = abs(page_frame)
-            # In real implementation, would copy page from disk
-            # Update PT entry
-            self.PM[pt_loc * 512 + p] = new_frame
-            page_frame = new_frame
+            page_frame = self.handle_page_fault(s, p, is_pt=False)
+            if page_frame is None:
+                return None
+        self.access_frame(page_frame)  # Access page frame
 
         # Calculate final physical address
         return page_frame * 512 + w
+
+    def handle_page_fault(self, segment, page, is_pt=False):
+        """Handle a page fault for a page table or a page. Returns the frame number used, or None if failed."""
+        # Try to get a free frame
+        if len(self.used_frames) < 1024:
+            frame = self.get_next_free_frame()
+        else:
+            frame = self.evict_lfu_frame()
+            if frame is None:
+                return None
+        # Simulate loading from disk
+        if is_pt:
+            # Loading a page table
+            pt_disk_block = abs(self.PM[2 * segment + 1])
+            # In a real system, copy PT from disk to frame
+            self.PM[2 * segment + 1] = frame  # Update ST to point to new PT frame
+        else:
+            # Loading a page
+            pt_loc = self.PM[2 * segment + 1]
+            disk_block = abs(self.PM[pt_loc * 512 + page])
+            # In a real system, copy page from disk to frame
+            self.PM[pt_loc * 512 + page] = frame  # Update PT to point to new page frame
+        return frame
 
     def process_addresses(self, input_file, output_file):
         """Process virtual addresses from input file and write results to output file."""
@@ -122,6 +155,105 @@ class VMManager:
                 else:
                     results.append("-1")
             fout.write(" ".join(results))
+
+    def malloc(self, size):
+        """
+        Allocate a block of memory of size words. Returns the starting physical address or -1 if failed.
+        
+        Note: This malloc implementation only allocates contiguous blocks of physical frames.
+        It does NOT support non-contiguous (scattered) frame allocation, unlike a real virtual memory system with paging.
+        If sufficient contiguous frames are not available, malloc will fail even if enough total free frames exist.
+        This design choice simplifies the allocator but may cause fragmentation and allocation failures under heavy use.
+        """
+        import math
+        FRAME_SIZE = 512
+        MAX_FRAMES = 1024
+        num_frames = math.ceil(size / FRAME_SIZE)
+        attempts = 0
+        while attempts <= MAX_FRAMES:
+            # Search for a block of num_frames consecutive free frames
+            cur_frame = self.next_free_frame
+            while cur_frame <= MAX_FRAMES - num_frames:
+                block_free = True
+                for offset in range(num_frames):
+                    if (cur_frame + offset) in self.used_frames:
+                        block_free = False
+                        break
+                if block_free:
+                    frame_list = []
+                    for offset in range(num_frames):
+                        frame_num = cur_frame + offset
+                        self.used_frames.add(frame_num)
+                        self.highest_frame = max(self.highest_frame, frame_num)
+                        frame_list.append(frame_num)
+                    next_candidate = cur_frame + num_frames
+                    while next_candidate in self.used_frames and next_candidate < MAX_FRAMES:
+                        next_candidate += 1
+                    self.next_free_frame = next_candidate
+                    start_addr = cur_frame * FRAME_SIZE
+                    self.allocations[start_addr] = (num_frames, frame_list)
+                    return start_addr
+                cur_frame += 1
+            # If we reach here, no contiguous block is available; evict one LFU frame and try again
+            lfu_frame = self.evict_lfu_frame()
+            if lfu_frame is None:
+                break
+            # Remove lfu_frame from any allocation it belonged to
+            to_remove = []
+            for addr, (nframes, frames) in self.allocations.items():
+                if lfu_frame in frames:
+                    frames.remove(lfu_frame)
+                    if not frames:
+                        to_remove.append(addr)
+                    else:
+                        self.allocations[addr] = (len(frames), frames)
+            for addr in to_remove:
+                del self.allocations[addr]
+            attempts += 1
+        return -1
+
+    def free(self, address) -> bool:
+        """Free the memory block starting at the given physical address."""
+        if address not in self.allocations:
+            return False  # Invalid free
+        _, frame_list = self.allocations[address]
+        for frame in frame_list:
+            if frame in self.used_frames:
+                self.used_frames.remove(frame)
+            if frame in self.frame_access_count:
+                del self.frame_access_count[frame]
+        del self.allocations[address]
+        
+        return True
+
+    def realloc(self, address, new_size) -> int:
+        """Resize the memory block at address to new_size words. Returns new address or -1 if failed."""
+        if address not in self.allocations:
+            return -1  # Invalid realloc
+        import math
+        FRAME_SIZE = 512
+        old_num_frames, old_frames = self.allocations[address]
+        new_num_frames = math.ceil(new_size / FRAME_SIZE)
+        # If new size fits in the same block, do nothing
+        if new_num_frames == old_num_frames:
+            return address
+        # If shrinking, free extra frames
+        if new_num_frames < old_num_frames:
+            frames_to_free = old_frames[new_num_frames:]
+            for frame in frames_to_free:
+                if frame in self.used_frames:
+                    self.used_frames.remove(frame)
+                if frame in self.frame_access_count:
+                    del self.frame_access_count[frame]
+            self.allocations[address] = (new_num_frames, old_frames[:new_num_frames])
+            return address
+        # If growing, try to allocate a new block and copy
+        new_addr = self.malloc(new_size)
+        if new_addr == -1:
+            return -1  # Failed to allocate new block
+        # Simulate copying data from old block to new block (not implemented)
+        self.free(address)
+        return new_addr
 
 def main():
     vm = VMManager()
