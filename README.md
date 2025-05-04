@@ -58,4 +58,4 @@ The core of the project is implemented in `virtual_memory.py`, which defines a `
 
 
 ---
-This emulator is designed for educational use in UC Irvine's CS 143B course to illustrate file system principles and provide hands-on experience with file system operations.
+This simulator is designed for educational use in UC Irvine's CS 143B course to illustrate VM principles and provide hands-on experience with VM operations.
