@@ -55,3 +55,7 @@ The core of the project is implemented in `virtual_memory.py`, which defines a `
 ## Notes
 - The simulation assumes that the disk contains valid data for non-resident page tables and pages.
 - The logic for loading a page from disk is a placeholder, as the project focuses on address translation and page fault handling.
+
+
+---
+This emulator is designed for educational use in UC Irvine's CS 143B course to illustrate file system principles and provide hands-on experience with file system operations.
